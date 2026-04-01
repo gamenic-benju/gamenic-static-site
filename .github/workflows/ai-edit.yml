@@ -1,0 +1,86 @@
+name: AI Edit via Claude
+
+on:
+  workflow_dispatch:
+    inputs:
+      edit_prompt:
+        description: 'What do you want to change? (e.g. "Change the hero title to Game On")'
+        required: true
+        type: string
+      file_path:
+        description: 'File to edit (e.g. components/Hero.jsx)'
+        required: true
+        type: string
+
+jobs:
+  ai-edit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Anthropic SDK
+        run: npm install @anthropic-ai/sdk
+
+      - name: Run AI Edit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EDIT_PROMPT: ${{ github.event.inputs.edit_prompt }}
+          FILE_PATH: ${{ github.event.inputs.file_path }}
+        run: |
+          node -e "
+          const Anthropic = require('@anthropic-ai/sdk');
+          const fs = require('fs');
+          const path = require('path');
+
+          async function main() {
+            const client = new Anthropic.default();
+            const filePath = process.env.FILE_PATH;
+            const prompt = process.env.EDIT_PROMPT;
+
+            if (!fs.existsSync(filePath)) {
+              console.error('File not found:', filePath);
+              process.exit(1);
+            }
+
+            const fileContent = fs.readFileSync(filePath, 'utf8');
+
+            const message = await client.messages.create({
+              model: 'claude-sonnet-4-6',
+              max_tokens: 4096,
+              messages: [
+                {
+                  role: 'user',
+                  content: \`You are editing a Next.js file. Return ONLY the complete updated file content with no markdown, no explanation, no code fences.
+
+File: \${filePath}
+Current content:
+\${fileContent}
+
+Edit instruction: \${prompt}\`
+                }
+              ]
+            });
+
+            const newContent = message.content[0].text;
+            fs.writeFileSync(filePath, newContent, 'utf8');
+            console.log('File updated successfully:', filePath);
+          }
+
+          main().catch(e => { console.error(e); process.exit(1); });
+          "
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ${{ github.event.inputs.file_path }}
+          git diff --staged --quiet || git commit -m "AI edit: ${{ github.event.inputs.edit_prompt }}"
+          git push
